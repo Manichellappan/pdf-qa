@@ -1,5 +1,10 @@
-import streamlit as st
 import os
+
+# Fix for Hugging Face Spaces: redirect Streamlit's home to /app
+os.environ.setdefault("HOME", "/app")
+os.makedirs(os.path.join(os.environ["HOME"], ".streamlit"), exist_ok=True)
+
+import streamlit as st
 import tempfile
 import logging
 import shutil
