@@ -1,3 +1,15 @@
+---
+title: My Agentic AI Demo
+emoji: 🚀
+colorFrom: blue
+colorTo: green
+sdk: streamlit
+sdk_version: "1.36.0"
+app_file: app.py
+pinned: false
+---
+
+
 PDF Q\&A System (Local LLM with FAISS Index)
 
 Overview:
