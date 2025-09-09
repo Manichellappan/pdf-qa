@@ -15,6 +15,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # copy app files
 COPY . .
 
+# --- Fix: create writable dirs and set permissions ---
+RUN mkdir -p /app/indexes /tmp/.streamlit \
+    && chmod -R 777 /app/indexes /tmp/.streamlit
+
+# point Streamlit config to writable folder
+ENV STREAMLIT_HOME=/tmp/.streamlit
+ENV PYTHONUNBUFFERED=1
+
 # upgrade pip and install Python deps
 RUN python -m pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r requirements.txt
