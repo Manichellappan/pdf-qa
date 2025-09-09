@@ -1,26 +1,27 @@
-import os
+import os, sys
 from pathlib import Path
 
-# --- Robust fix for Spaces: force a writable config dir ---
-# Prefer /app (writable in Spaces). If /app is not writable for some reason,
-# fall back to /tmp so we never try to write to '/'.
-preferred_home = Path("/app")
-fallback_home = Path("/tmp")
+# ---- Force writable config dir for Hugging Face Spaces ----
+PREFERRED_HOME = Path("/app")
+FALLBACK_HOME = Path("/tmp")
 
 try:
-    # Force HOME to preferred writable location (override any existing value)
-    os.environ["HOME"] = str(preferred_home)
-    preferred_home.mkdir(parents=True, exist_ok=True)
-    config_dir = preferred_home / ".streamlit"
-    config_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = str(PREFERRED_HOME)
+    PREFERRED_HOME.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR = PREFERRED_HOME / ".streamlit"
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 except PermissionError:
-    # If /app isn't writable, use /tmp
-    os.environ["HOME"] = str(fallback_home)
-    config_dir = fallback_home / ".streamlit"
-    config_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = str(FALLBACK_HOME)
+    CONFIG_DIR = FALLBACK_HOME / ".streamlit"
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-# Also explicitly tell Streamlit where to put config files
-os.environ["STREAMLIT_CONFIG_DIR"] = str(config_dir)
+# Make sure Streamlit knows where to write config
+os.environ["STREAMLIT_CONFIG_DIR"] = str(CONFIG_DIR)
+
+# Debug — print these to stderr so they appear in the Space logs
+print(f"DEBUG STARTUP: HOME={os.environ.get('HOME')}", file=sys.stderr)
+print(f"DEBUG STARTUP: STREAMLIT_CONFIG_DIR={os.environ.get('STREAMLIT_CONFIG_DIR')}", file=sys.stderr)
+print(f"DEBUG STARTUP: exists? {str(CONFIG_DIR)} -> {CONFIG_DIR.exists()}", file=sys.stderr)
 
 import streamlit as st
 import tempfile
