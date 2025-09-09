@@ -1,12 +1,32 @@
 import streamlit as st
 import os
+import tempfile
+import logging
+import shutil
 from ingest import ingest_large_pdf
 from query_engine import load_query_engine, ask_question
-import shutil
 
-# Folder to store session FAISS indexes
-INDEX_DIR = "indexes"
-os.makedirs(INDEX_DIR, exist_ok=True)
+# Setup basic logging
+logging.basicConfig(level=logging.INFO)
+
+# --- Safe writable directories (works with Dockerfile changes) ---
+# Prefer a relative path inside the WORKDIR (/app). If that fails, fallback to tmp dir.
+try:
+    INDEX_DIR = os.path.join(os.getcwd(), "indexes")
+    os.makedirs(INDEX_DIR, exist_ok=True)
+    logging.info(f"Using INDEX_DIR: {INDEX_DIR}")
+except PermissionError:
+    logging.warning("PermissionError creating /app/indexes; falling back to a temporary directory")
+    INDEX_DIR = tempfile.mkdtemp(prefix="indexes_")
+    logging.info(f"Falling back to INDEX_DIR: {INDEX_DIR}")
+
+# Ensure Streamlit home is set to a writable dir (Dockerfile sets this to /tmp/.streamlit)
+if "STREAMLIT_HOME" not in os.environ:
+    os.environ["STREAMLIT_HOME"] = "/tmp/.streamlit"
+try:
+    os.makedirs(os.environ["STREAMLIT_HOME"], exist_ok=True)
+except Exception as e:
+    logging.warning(f"Could not create STREAMLIT_HOME directory: {e}")
 
 st.set_page_config(page_title="PDF Q&A", page_icon="📘", layout="wide")
 st.title("📘 PDF Q&A with Local LLM (HuggingFace Space)")
@@ -17,62 +37,98 @@ st.sidebar.header("PDF & FAISS Index Management")
 # Upload new PDF
 uploaded_pdf = st.sidebar.file_uploader("Upload PDF to create index", type=["pdf"], key="pdf_upload")
 if uploaded_pdf:
-    pdf_path = os.path.join("uploaded.pdf")
-    with open(pdf_path, "wb") as f:
-        f.write(uploaded_pdf.getbuffer())
-    st.sidebar.success("✅ PDF uploaded")
+    # Save uploaded PDF inside the app working dir to ensure writable path
+    pdf_path = os.path.join(os.getcwd(), "uploaded.pdf")
+    try:
+        with open(pdf_path, "wb") as f:
+            f.write(uploaded_pdf.getbuffer())
+        st.sidebar.success("✅ PDF uploaded")
+    except Exception as e:
+        st.sidebar.error(f"Failed to save uploaded PDF: {e}")
+        logging.exception(e)
+        pdf_path = None
 
     # Ask for index name
-    index_name = st.sidebar.text_input("Enter index name for this PDF:", value=f"index_{len(os.listdir(INDEX_DIR)) + 1}")
+    if pdf_path:
+        index_name = st.sidebar.text_input("Enter index name for this PDF:",
+                                          value=f"index_{len([d for d in os.listdir(INDEX_DIR) if os.path.isdir(os.path.join(INDEX_DIR, d))]) + 1}")
 
-    if st.sidebar.button("🔍 Build FAISS Index"):
-        if not index_name.strip():
-            st.sidebar.warning("Please provide a valid index name")
-        else:
-            index_path = os.path.join(INDEX_DIR, index_name)
-            with st.spinner("Processing PDF and building FAISS index... ⏳"):
-                ingest_large_pdf(pdf_path, index_path=index_path)
-            st.sidebar.success(f"🎉 FAISS index created: {index_name}")
+        if st.sidebar.button("🔍 Build FAISS Index"):
+            if not index_name.strip():
+                st.sidebar.warning("Please provide a valid index name")
+            else:
+                index_path = os.path.join(INDEX_DIR, index_name)
+                try:
+                    with st.spinner("Processing PDF and building FAISS index... ⏳"):
+                        os.makedirs(index_path, exist_ok=True)
+                        ingest_large_pdf(pdf_path, index_path=index_path)
+                    st.sidebar.success(f"🎉 FAISS index created: {index_name}")
+                except Exception as e:
+                    st.sidebar.error(f"Failed to build FAISS index: {e}")
+                    logging.exception(e)
 
-            # Download button
-            if st.sidebar.button(f"⬇️ Download '{index_name}'"):
-                shutil.make_archive(index_path, 'zip', index_path)
-                with open(f"{index_path}.zip", "rb") as f:
-                    st.sidebar.download_button(
-                        label=f"Download FAISS Index '{index_name}'",
-                        data=f,
-                        file_name=f"{index_name}.zip",
-                        mime="application/zip"
-                    )
+                # Download button
+                if os.path.isdir(index_path) and st.sidebar.button(f"⬇️ Download '{index_name}'"):
+                    try:
+                        shutil.make_archive(index_path, 'zip', index_path)
+                        with open(f"{index_path}.zip", "rb") as f:
+                            st.sidebar.download_button(
+                                label=f"Download FAISS Index '{index_name}'",
+                                data=f,
+                                file_name=f"{index_name}.zip",
+                                mime="application/zip"
+                            )
+                    except Exception as e:
+                        st.sidebar.error(f"Failed to create/download archive: {e}")
+                        logging.exception(e)
 
 # Upload previously saved FAISS index (.zip)
 st.sidebar.subheader("Or Upload Existing FAISS Index")
 uploaded_index = st.sidebar.file_uploader("Upload FAISS Index (.zip)", type=["zip"], key="index_upload")
 if uploaded_index:
-    save_name = st.sidebar.text_input("Enter name to save this index:", value=f"uploaded_index_{len(os.listdir(INDEX_DIR)) + 1}")
+    save_name = st.sidebar.text_input("Enter name to save this index:",
+                                      value=f"uploaded_index_{len([d for d in os.listdir(INDEX_DIR) if os.path.isdir(os.path.join(INDEX_DIR, d))]) + 1}")
     if st.sidebar.button("📂 Save Uploaded Index"):
         save_path = os.path.join(INDEX_DIR, save_name)
-        os.makedirs(save_path, exist_ok=True)
-        temp_zip = os.path.join(save_path, "temp.zip")
-        with open(temp_zip, "wb") as f:
-            f.write(uploaded_index.getbuffer())
-        shutil.unpack_archive(temp_zip, save_path)
-        os.remove(temp_zip)
-        st.sidebar.success(f"✅ FAISS index saved as {save_name}")
+        try:
+            os.makedirs(save_path, exist_ok=True)
+            temp_zip = os.path.join(save_path, "temp.zip")
+            with open(temp_zip, "wb") as f:
+                f.write(uploaded_index.getbuffer())
+            shutil.unpack_archive(temp_zip, save_path)
+            os.remove(temp_zip)
+            st.sidebar.success(f"✅ FAISS index saved as {save_name}")
+        except Exception as e:
+            st.sidebar.error(f"Failed to save uploaded index: {e}")
+            logging.exception(e)
 
 # --- Main Q&A Section ---
-# List all session FAISS indexes
-available_indexes = [f for f in os.listdir(INDEX_DIR) if os.path.isdir(os.path.join(INDEX_DIR, f))]
+# List all session FAISS indexes (directories inside INDEX_DIR)
+try:
+    available_indexes = [f for f in os.listdir(INDEX_DIR) if os.path.isdir(os.path.join(INDEX_DIR, f))]
+except Exception as e:
+    available_indexes = []
+    logging.exception(e)
+
 if available_indexes:
     st.subheader("Ask questions about your document(s)")
     selected_index = st.selectbox("Select FAISS Index:", available_indexes)
-    qa = load_query_engine(os.path.join(INDEX_DIR, selected_index))
+    try:
+        qa = load_query_engine(os.path.join(INDEX_DIR, selected_index))
+    except Exception as e:
+        st.error(f"Failed to load selected index: {e}")
+        qa = None
+        logging.exception(e)
 
     query = st.text_input("💡 Enter your question:")
-    if query:
+    if query and qa:
         with st.spinner("Thinking... 🤔"):
-            answer = ask_question(query, qa)
-        st.write("### 📖 Answer")
-        st.write(answer)
+            try:
+                answer = ask_question(query, qa)
+                st.write("### 📖 Answer")
+                st.write(answer)
+            except Exception as e:
+                st.error(f"Error during QA: {e}")
+                logging.exception(e)
 else:
     st.info("👈 Upload a PDF or FAISS index to start querying")
