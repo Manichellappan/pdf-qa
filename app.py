@@ -1,8 +1,26 @@
 import os
+from pathlib import Path
 
-# Fix for Hugging Face Spaces: redirect Streamlit's home to /app
-os.environ.setdefault("HOME", "/app")
-os.makedirs(os.path.join(os.environ["HOME"], ".streamlit"), exist_ok=True)
+# --- Robust fix for Spaces: force a writable config dir ---
+# Prefer /app (writable in Spaces). If /app is not writable for some reason,
+# fall back to /tmp so we never try to write to '/'.
+preferred_home = Path("/app")
+fallback_home = Path("/tmp")
+
+try:
+    # Force HOME to preferred writable location (override any existing value)
+    os.environ["HOME"] = str(preferred_home)
+    preferred_home.mkdir(parents=True, exist_ok=True)
+    config_dir = preferred_home / ".streamlit"
+    config_dir.mkdir(parents=True, exist_ok=True)
+except PermissionError:
+    # If /app isn't writable, use /tmp
+    os.environ["HOME"] = str(fallback_home)
+    config_dir = fallback_home / ".streamlit"
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+# Also explicitly tell Streamlit where to put config files
+os.environ["STREAMLIT_CONFIG_DIR"] = str(config_dir)
 
 import streamlit as st
 import tempfile
